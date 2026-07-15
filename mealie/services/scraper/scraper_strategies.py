@@ -18,17 +18,21 @@ from w3lib.html import get_base_url
 from yt_dlp.extractor.generic import GenericIE
 
 from mealie.core import exceptions
+from mealie.core.config import determine_data_dir, get_app_settings
 from mealie.core.dependencies.dependencies import get_temporary_path
 from mealie.core.root_logger import get_logger
 from mealie.lang.providers import Translator
 from mealie.pkgs import safehttp
 from mealie.repos.repository_factory import AllRepositories
+from mealie.schema.codex.social_recipe import SocialRecipe
 from mealie.schema.openai.general import OpenAIText
 from mealie.schema.openai.recipe import OpenAIRecipe
 from mealie.schema.recipe.recipe import Recipe, RecipeStep
 from mealie.schema.recipe.recipe_ingredient import RecipeIngredient
 from mealie.schema.recipe.recipe_notes import RecipeNote
+from mealie.services.codex_cli import CodexCLIError, CodexCLIService
 from mealie.services.openai import OpenAIService
+from mealie.services.parser_services._base import DataMatcher
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
 from . import cleaner
@@ -49,6 +53,18 @@ logger = get_logger()
 def _get_yt_dlp_extractors() -> list:
     """Build and cache the yt-dlp extractor list once per process lifetime."""
     return [ie for ie in yt_dlp.extractor.gen_extractors() if ie.working() and not isinstance(ie, GenericIE)]
+
+
+@functools.cache
+def _get_faster_whisper_model(model_size_or_path: str, device: str, compute_type: str, download_root: str):
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(
+        model_size_or_path,
+        device=device,
+        compute_type=compute_type,
+        download_root=download_root,
+    )
 
 
 class ForceTimeoutException(Exception):
@@ -470,6 +486,7 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
     def _download_audio(self, temp_path: Path) -> TranscribedAudio:
         """Downloads audio and subtitles from the video URL."""
         output_template = temp_path / "mealie"  # No extension here
+        settings = get_app_settings()
 
         ydl_opts = {
             "format": "bestaudio/best",
@@ -489,6 +506,14 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
             ],
             "postprocessor_args": ["-ac", "1"],
         }
+
+        if settings.SOCIAL_IMPORT_COOKIES_FILE:
+            cookie_file = Path(settings.SOCIAL_IMPORT_COOKIES_FILE)
+            if not cookie_file.is_file():
+                raise exceptions.VideoDownloadError(
+                    f"Configured social import cookies file does not exist: {cookie_file}"
+                )
+            ydl_opts["cookiefile"] = str(cookie_file)
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -609,6 +634,168 @@ class RecipeScraperOpenAITranscription(ABCScraperStrategy):
 
         self.logger.info(f"Successfully extracted recipe from video: {video_data['title']}")
         return recipe, ScrapedExtras()
+
+
+class RecipeScraperSocialMedia(RecipeScraperOpenAITranscription):
+    """
+    Extracts social-media recipe posts through a strict intermediate schema before
+    deterministically mapping the result into Mealie's Recipe model.
+    """
+
+    def can_scrape(self) -> bool:
+        if not self.url:
+            return False
+
+        return any(ie.suitable(self.url) for ie in _get_yt_dlp_extractors())
+
+    @staticmethod
+    def _minutes_to_text(minutes: int | None) -> str | None:
+        if minutes is None:
+            return None
+        if minutes == 1:
+            return "1 minute"
+        return f"{minutes} minutes"
+
+    @staticmethod
+    def _yield_to_text(servings: float | None) -> str | None:
+        if servings is None:
+            return None
+        if servings == 1:
+            return "1 serving"
+        if servings.is_integer():
+            return f"{int(servings)} servings"
+        return f"{servings:g} servings"
+
+    def _ingredient_to_recipe_ingredient(self, ingredient) -> RecipeIngredient:
+        matcher = DataMatcher(self.repos)
+        unit = matcher.find_unit_match(ingredient.unit) if ingredient.unit else None
+        food = matcher.find_food_match(ingredient.food) if ingredient.food else None
+
+        note_parts = []
+        if ingredient.unit and not unit:
+            note_parts.append(ingredient.unit)
+        if ingredient.food and not food:
+            note_parts.append(ingredient.food)
+        if ingredient.note:
+            note_parts.append(ingredient.note)
+
+        return RecipeIngredient(
+            quantity=ingredient.quantity or 0,
+            unit=unit,
+            food=food,
+            note=" ".join(note_parts),
+            original_text=ingredient.originalText,
+        )
+
+    def _transcribe_audio_locally(self, audio_path: Path) -> str:
+        settings = get_app_settings()
+        if not settings.SOCIAL_IMPORT_TRANSCRIPTION_ENABLED:
+            return ""
+
+        if not audio_path.is_file():
+            self.logger.warning("Skipping local transcription because audio file is missing: %s", audio_path)
+            return ""
+
+        model_dir = determine_data_dir() / "whisper-models"
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            model = _get_faster_whisper_model(
+                settings.SOCIAL_IMPORT_TRANSCRIPTION_MODEL,
+                settings.SOCIAL_IMPORT_TRANSCRIPTION_DEVICE,
+                settings.SOCIAL_IMPORT_TRANSCRIPTION_COMPUTE_TYPE,
+                str(model_dir),
+            )
+            segments, _ = model.transcribe(str(audio_path), vad_filter=True)
+            return " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+        except Exception:
+            self.logger.exception("Failed to transcribe social media audio locally")
+            return ""
+
+    async def parse(
+        self,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> tuple[Recipe, ScrapedExtras] | tuple[None, None]:
+        with get_temporary_path() as temp_path:
+            if on_progress:
+                await on_progress(self.translator.t("recipe.create-progress.downloading-video"))
+
+            video_data = await asyncio.to_thread(self._download_audio, temp_path)
+
+            if video_data["subtitle"]:
+                try:
+                    with open(video_data["subtitle"], encoding="utf-8") as f:
+                        subtitle_content = f.read()
+                    video_data["transcription"] = self._parse_subtitle_content(subtitle_content)
+                    self.logger.info("Using subtitles from social media post instead of transcription")
+                except Exception:
+                    self.logger.exception("Failed to read subtitles, falling back to transcription")
+                    video_data["transcription"] = ""
+
+            if not video_data["transcription"]:
+                if on_progress:
+                    await on_progress(self.translator.t("recipe.create-progress.transcribing-audio-locally"))
+
+                video_data["transcription"] = await asyncio.to_thread(
+                    self._transcribe_audio_locally,
+                    video_data["audio"],
+                )
+
+        raw_content = "\n".join(
+            [
+                f"Source URL: {self.url}",
+                f"Title: {video_data['title']}",
+                f"Caption or description: {video_data['description']}",
+                f"Transcript: {video_data['transcription']}",
+            ]
+        ).strip()
+
+        if not raw_content:
+            self.logger.error("Could not extract social media content")
+            return None, None
+
+        if on_progress:
+            await on_progress(self.translator.t("recipe.create-progress.creating-recipe-from-transcript-with-ai"))
+
+        try:
+            response = await CodexCLIService().extract_structured(raw_content, SocialRecipe)
+        except CodexCLIError as e:
+            raise CodexCLIError(f"Failed to extract recipe from social content: {e}") from e
+
+        if not response:
+            raise CodexCLIError("Codex CLI returned an empty response when extracting recipe")
+
+        if response.confidence == "low" and (not response.ingredients or not response.instructions):
+            warnings = "; ".join(response.warnings) or "Source did not contain a complete usable recipe"
+            raise CodexCLIError(warnings)
+
+        extras = ScrapedExtras()
+        extras.set_tags(response.tags)
+
+        recipe = Recipe(
+            name=response.name,
+            slug="",
+            description=response.description,
+            recipe_yield=self._yield_to_text(response.servings),
+            prep_time=self._minutes_to_text(response.prepTimeMinutes),
+            perform_time=self._minutes_to_text(response.cookTimeMinutes),
+            recipe_ingredient=[
+                self._ingredient_to_recipe_ingredient(ingredient)
+                for ingredient in response.ingredients
+                if ingredient.originalText
+            ],
+            recipe_instructions=[
+                RecipeStep(title=instruction.title, text=instruction.text)
+                for instruction in response.instructions
+                if instruction.text
+            ],
+            notes=[RecipeNote(title="Import warning", text=warning) for warning in response.warnings],
+            image=video_data["thumbnail_url"] or None,
+            org_url=response.sourceUrl or self.url,
+        )
+
+        self.logger.info(f"Successfully extracted social recipe: {response.name}")
+        return recipe, extras
 
 
 class RecipeScraperOpenGraph(ABCScraperStrategy):

@@ -424,6 +424,36 @@ class AppSettings(AppLoggingSettings):
     """
 
     # ===============================================
+    # Codex CLI Configuration
+
+    CODEX_CLI_BINARY: str = "codex"
+    """Path to the Codex CLI binary used for social recipe extraction."""
+
+    CODEX_CLI_MODEL: str | None = None
+    """Optional model override passed to `codex exec --model`."""
+
+    CODEX_CLI_PROFILE: str | None = None
+    """Optional profile passed to `codex exec --profile`."""
+
+    CODEX_CLI_TIMEOUT: int = 300
+    """Maximum seconds to wait for Codex CLI recipe extraction."""
+
+    SOCIAL_IMPORT_COOKIES_FILE: str | None = None
+    """Optional Netscape-format cookies file passed to yt-dlp for social media imports."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_ENABLED: bool = True
+    """Enable local faster-whisper transcription for social media imports when subtitles are unavailable."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_MODEL: str = "base"
+    """faster-whisper model size or model ID used for local social media audio transcription."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_DEVICE: str = "cpu"
+    """Device passed to faster-whisper for local social media audio transcription."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_COMPUTE_TYPE: str = "int8"
+    """Compute type passed to faster-whisper for local social media audio transcription."""
+
+    # ===============================================
     # Web Concurrency
 
     WORKER_PER_CORE: int = 1
