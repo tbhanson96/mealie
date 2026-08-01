@@ -112,6 +112,7 @@ class CodexCLIService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            logger.info("Running Codex CLI recipe extraction")
 
             try:
                 stdout, stderr = await asyncio.wait_for(
