@@ -15,8 +15,8 @@ from mealie.services.recipe.recipe_data_service import RecipeDataService
 from mealie.services.scraper.scraped_extras import ScrapedExtras
 
 from . import cleaner
-from .recipe_scraper import RecipeScraper
-from .scraper_strategies import RecipeScraperSocialMedia
+from .recipe_scraper import DEFAULT_SCRAPER_STRATEGIES, RecipeScraper
+from .scraper_strategies import RecipeScraperOpenAI, RecipeScraperSocialMedia
 
 
 class ParserErrors(StrEnum):
@@ -50,6 +50,17 @@ async def create_from_html(
         if not extracted_url:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, {"details": ParserErrors.BAD_RECIPE_DATA.value})
         url = extracted_url.group(0)
+    else:
+        # Caller-supplied HTML/JSON should get the same Codex ingredient catalog matching
+        # as social imports before falling back to the generic scraper.
+        scraper = RecipeScraper(
+            repos,
+            translator,
+            scrapers=[
+                RecipeScraperOpenAI,
+                *[scraper for scraper in DEFAULT_SCRAPER_STRATEGIES if scraper is not RecipeScraperOpenAI],
+            ],
+        )
 
     new_recipe, extras = await scraper.scrape(url, html, on_progress=on_progress)
 
