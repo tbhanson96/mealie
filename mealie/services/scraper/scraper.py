@@ -19,6 +19,13 @@ from .recipe_scraper import DEFAULT_SCRAPER_STRATEGIES, RecipeScraper
 from .scraper_strategies import RecipeScraperOpenAI, RecipeScraperSocialMedia
 
 
+def _codex_first_scraper_strategies():
+    return [
+        RecipeScraperOpenAI,
+        *[scraper for scraper in DEFAULT_SCRAPER_STRATEGIES if scraper is not RecipeScraperOpenAI],
+    ]
+
+
 class ParserErrors(StrEnum):
     BAD_RECIPE_DATA = "BAD_RECIPE_DATA"
     NO_RECIPE_DATA = "NO_RECIPE_DATA"
@@ -43,24 +50,16 @@ async def create_from_html(
     Returns:
         Recipe: Recipe Object
     """
-    scraper = RecipeScraper(repos, translator)
-
     if not html:
         extracted_url = regex_search(r"(https?://|www\.)[^\s]+", url)
         if not extracted_url:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, {"details": ParserErrors.BAD_RECIPE_DATA.value})
         url = extracted_url.group(0)
-    else:
-        # Caller-supplied HTML/JSON should get the same Codex ingredient catalog matching
-        # as social imports before falling back to the generic scraper.
-        scraper = RecipeScraper(
-            repos,
-            translator,
-            scrapers=[
-                RecipeScraperOpenAI,
-                *[scraper for scraper in DEFAULT_SCRAPER_STRATEGIES if scraper is not RecipeScraperOpenAI],
-            ],
-        )
+
+    # URL and caller-supplied HTML/JSON imports should get the same Codex
+    # ingredient catalog matching as social imports before falling back to the
+    # generic scraper.
+    scraper = RecipeScraper(repos, translator, scrapers=_codex_first_scraper_strategies())
 
     new_recipe, extras = await scraper.scrape(url, html, on_progress=on_progress)
 
