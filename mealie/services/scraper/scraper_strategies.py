@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
+from uuid import UUID
 
 import bs4
 import extruct
@@ -153,10 +154,20 @@ class ABCScraperStrategy(ABC):
         ]
         return json.dumps({"foods": foods, "units": units}, separators=(",", ":"))
 
+    @staticmethod
+    def _get_catalog_item_by_id(items_by_id: dict, item_id: str | None):
+        if not item_id:
+            return None
+
+        try:
+            return items_by_id.get(UUID(item_id))
+        except (TypeError, ValueError):
+            return None
+
     def _ingredient_to_recipe_ingredient(self, ingredient, matcher: DataMatcher | None = None) -> RecipeIngredient:
         matcher = matcher or DataMatcher(self.repos)
-        unit = matcher.units_by_id.get(ingredient.unitId) if ingredient.unitId else None
-        food = matcher.foods_by_id.get(ingredient.foodId) if ingredient.foodId else None
+        unit = self._get_catalog_item_by_id(matcher.units_by_id, ingredient.unitId)
+        food = self._get_catalog_item_by_id(matcher.foods_by_id, ingredient.foodId)
 
         if not unit and ingredient.unit:
             unit = matcher.find_unit_match(ingredient.unit)

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from mealie.schema.codex.social_recipe import SocialRecipe
 from mealie.services.codex_cli import CodexCLIService
 
 
@@ -16,3 +17,9 @@ def test_codex_prompt_context_is_passed_through_stdin_not_argv():
     assert large_catalog not in command
     assert large_catalog in prompt
     assert "recipe content" in prompt
+
+
+def test_codex_recipe_schema_uses_supported_id_formats():
+    schema = SocialRecipe.model_json_schema()
+
+    assert "uuid4" not in str(schema)
