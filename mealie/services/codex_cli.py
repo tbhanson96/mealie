@@ -15,6 +15,28 @@ class CodexCLIError(Exception):
     pass
 
 
+def _trim_codex_output(text: str, max_length: int = 4000) -> str:
+    text = text.strip()
+    if len(text) <= max_length:
+        return text
+
+    return f"{text[:max_length]}... [truncated {len(text) - max_length} chars]"
+
+
+def _format_codex_error(stdout: bytes, stderr: bytes) -> str:
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+
+    if stderr_text:
+        return _trim_codex_output(stderr_text)
+
+    error_lines = [line for line in stdout_text.splitlines() if "ERROR" in line or '"type": "error"' in line]
+    if error_lines:
+        return _trim_codex_output("\n".join(error_lines))
+
+    return _trim_codex_output(stdout_text)
+
+
 class CodexCLIService:
     def _build_command(self, schema_path: Path, output_path: Path) -> list[str]:
         settings = get_app_settings()
@@ -102,10 +124,9 @@ class CodexCLIService:
                 raise CodexCLIError("Codex CLI recipe extraction timed out") from e
 
             if process.returncode != 0:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                stdout_text = stdout.decode("utf-8", errors="replace").strip()
-                logger.error(f"Codex CLI failed: {stderr_text or stdout_text}")
-                raise CodexCLIError(stderr_text or stdout_text or "Codex CLI recipe extraction failed")
+                error_text = _format_codex_error(stdout, stderr)
+                logger.error(f"Codex CLI failed: {error_text}")
+                raise CodexCLIError(error_text or "Codex CLI recipe extraction failed")
 
             try:
                 response_text = output_path.read_text(encoding="utf-8")
