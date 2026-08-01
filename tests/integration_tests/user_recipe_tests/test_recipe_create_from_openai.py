@@ -4,11 +4,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 import mealie.services.scraper.recipe_scraper as recipe_scraper_module
+import mealie.services.scraper.scraper as scraper_service_module
 from mealie.schema.codex.social_recipe import SocialRecipe, SocialRecipeIngredient, SocialRecipeInstruction
 from mealie.schema.group.ai_providers import AIProviderCreate, AIProviderSettingsUpdate
 from mealie.services.codex_cli import CodexCLIError, CodexCLIService
 from mealie.services.recipe.recipe_data_service import RecipeDataService
-from mealie.services.scraper.scraper_strategies import RecipeScraperOpenAI
+from mealie.services.scraper.scraper_strategies import RecipeScraperOpenAI, RecipeScraperPackage
 from tests.utils import api_routes
 from tests.utils.factories import random_string
 from tests.utils.fixture_schemas import TestUser
@@ -139,6 +140,53 @@ def test_create_by_html_or_json_via_openai(
     assert response.status_code == 201
     slug = json.loads(response.text)
 
+    recipe = api_client.get(api_routes.recipes_slug(slug), headers=unique_user.token).json()
+    assert recipe["name"] == recipe_name
+
+
+def test_create_by_html_or_json_prefers_codex_before_package_parser(
+    api_client: TestClient,
+    unique_user: TestUser,
+    monkeypatch: pytest.MonkeyPatch,
+    codex_recipe: SocialRecipe,
+    recipe_name: str,
+):
+    async def mock_extract_structured(self, raw_content: str, schema_model, prompt_context: str | None = None):
+        assert "recipeIngredient" in raw_content
+        assert schema_model is SocialRecipe
+        assert prompt_context
+        return codex_recipe
+
+    async def fail_if_package_parser_runs_first(self, *args, **kwargs):
+        raise AssertionError("HTML import should try Codex before the package parser")
+
+    monkeypatch.setattr(CodexCLIService, "extract_structured", mock_extract_structured)
+    monkeypatch.setattr(RecipeScraperPackage, "parse", fail_if_package_parser_runs_first)
+    monkeypatch.setattr(
+        scraper_service_module,
+        "DEFAULT_SCRAPER_STRATEGIES",
+        [RecipeScraperPackage, RecipeScraperOpenAI],
+    )
+
+    response = api_client.post(
+        api_routes.recipes_create_html_or_json,
+        json={
+            "data": json.dumps(
+                {
+                    "@context": "https://schema.org",
+                    "@type": "Recipe",
+                    "name": "Package parser would normally parse this",
+                    "recipeIngredient": ["1 cup rice"],
+                    "recipeInstructions": [{"@type": "HowToStep", "text": "Cook the rice."}],
+                }
+            ),
+            "include_tags": False,
+        },
+        headers=unique_user.token,
+    )
+
+    assert response.status_code == 201
+    slug = json.loads(response.text)
     recipe = api_client.get(api_routes.recipes_slug(slug), headers=unique_user.token).json()
     assert recipe["name"] == recipe_name
 
