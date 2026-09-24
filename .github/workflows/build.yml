@@ -62,15 +62,15 @@ jobs:
           check-latest: true
 
       - name: Install frontend dependencies
-        run: yarn
+        run: corepack pnpm install --frozen-lockfile
         working-directory: frontend
 
       - name: Prepare Nuxt
-        run: yarn nuxt prepare
+        run: corepack pnpm nuxt prepare
         working-directory: frontend
 
       - name: Run frontend unit tests
-        run: yarn test:ci
+        run: corepack pnpm test:ci
         working-directory: frontend
 
   docker:
