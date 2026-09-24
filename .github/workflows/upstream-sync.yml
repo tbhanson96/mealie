@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: mealie-next
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Validate sync token
