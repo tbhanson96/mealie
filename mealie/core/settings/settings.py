@@ -453,6 +453,31 @@ class AppSettings(AppLoggingSettings):
     """
 
     # ===============================================
+    # Local Codex Recipe Import
+
+    CODEX_CLI_ENABLED: bool = True
+    """Prefer the local Codex CLI for text, HTML, and video recipe extraction when it is installed."""
+
+    CODEX_CLI_BINARY: str = "codex"
+    """Path to the Codex CLI binary."""
+
+    CODEX_CLI_MODEL: str | None = None
+    """Optional model override passed to ``codex exec --model``."""
+
+    CODEX_CLI_PROFILE: str | None = None
+    """Optional profile passed to ``codex exec --profile``."""
+
+    CODEX_CLI_TIMEOUT: int = 300
+    """Maximum seconds to wait for local Codex extraction."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_ENABLED: bool = True
+    """Use local faster-whisper when a video has no subtitles."""
+
+    SOCIAL_IMPORT_TRANSCRIPTION_MODEL: str = "base"
+    SOCIAL_IMPORT_TRANSCRIPTION_DEVICE: str = "cpu"
+    SOCIAL_IMPORT_TRANSCRIPTION_COMPUTE_TYPE: str = "int8"
+
+    # ===============================================
     # Scraper Configuration
 
     SCRAPER_PROXY_URL: str | None = None
@@ -516,6 +541,9 @@ class AppSettings(AppLoggingSettings):
     # YtDLP Configuration
     YTDLP_COOKIEFILE: str | None = None
     """Path to a cookies file for yt_dlp (used for video transcription scraping)"""
+
+    SOCIAL_IMPORT_COOKIES_FILE: str | None = None
+    """Legacy-compatible cookies path for the fork's social importer; YTDLP_COOKIEFILE takes precedence."""
 
 
 def app_settings_constructor(data_dir: Path, production: bool, env_file: Path, env_encoding="utf-8") -> AppSettings:

@@ -6,6 +6,7 @@ from fastapi import UploadFile
 
 from mealie.core.dependencies.dependencies import get_temporary_path
 from mealie.schema.recipe.recipe import Recipe
+from mealie.services.codex_cli import CodexCLIService
 from mealie.services.openai import OpenAIService
 from mealie.services.scraper.scraper import finalize_scraped_recipe
 
@@ -37,6 +38,7 @@ class AIRecipeService(RecipeService):
         url: str | None = None,
         translate_language: str | None = None,
         create_new_organizers: bool = False,
+        resolve_organizers: bool = True,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> Recipe:
         """
@@ -54,6 +56,7 @@ class AIRecipeService(RecipeService):
                 url=url,
                 translate_language=translate_language,
                 create_new_organizers=create_new_organizers,
+                resolve_organizers=resolve_organizers,
                 on_progress=on_progress,
             )
 
@@ -72,6 +75,7 @@ class AIRecipeService(RecipeService):
         url: str | None = None,
         translate_language: str | None = None,
         create_new_organizers: bool = False,
+        resolve_organizers: bool = True,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> Recipe:
         """
@@ -85,19 +89,24 @@ class AIRecipeService(RecipeService):
             raise NoRecipeDataError(self.t("recipe.import-errors.no-source"))
 
         ai_service = OpenAIService(self.repos)
-        self._validate_providers(ai_service, has_images=bool(workflow_input.images))
+        codex_service = CodexCLIService() if CodexCLIService.is_available() and not workflow_input.images else None
+        self._validate_providers(
+            ai_service, has_images=bool(workflow_input.images), has_codex=codex_service is not None
+        )
 
         ctx = WorkflowContext(
             input=workflow_input,
             options=WorkflowOptions(
                 translate_language=translate_language,
                 create_new_organizers=create_new_organizers,
+                resolve_organizers=resolve_organizers,
             ),
             repos=self.repos,
             user=self.user,
             household=self.household,
             translator=self.translator,
             ai=ai_service,
+            codex=codex_service,
             on_progress=on_progress,
         )
 
@@ -118,10 +127,10 @@ class AIRecipeService(RecipeService):
 
         return local_images
 
-    def _validate_providers(self, ai_service: OpenAIService, *, has_images: bool) -> None:
+    def _validate_providers(self, ai_service: OpenAIService, *, has_images: bool, has_codex: bool = False) -> None:
         settings = ai_service.provider_settings
-        if not (settings and settings.ai_enabled):
+        if not has_codex and not (settings and settings.ai_enabled):
             raise AIProviderNotEnabledError(self.t("recipe.import-errors.ai-not-enabled"))
 
-        if has_images and not settings.image_provider_enabled:
+        if has_images and not (settings and settings.image_provider_enabled):
             raise AIProviderNotEnabledError(self.t("recipe.import-errors.image-provider-not-enabled"))

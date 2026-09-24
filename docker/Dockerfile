@@ -15,6 +15,13 @@ RUN pnpm clean-install
 RUN pnpm generate
 
 ###############################################
+# Codex CLI
+###############################################
+FROM node:24@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0 AS codex-cli
+
+RUN npm install --global @openai/codex@0.142.5
+
+###############################################
 # Base Image - Python
 ###############################################
 FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 \
@@ -135,6 +142,10 @@ RUN apt-get update \
     libldap2 \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=codex-cli /usr/local/bin/node /usr/local/bin/node
+COPY --from=codex-cli /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/@openai
+RUN ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 
 # create directory used for Docker Secrets
 RUN mkdir -p /run/secrets

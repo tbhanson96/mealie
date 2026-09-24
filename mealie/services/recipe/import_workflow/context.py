@@ -12,6 +12,7 @@ from mealie.schema.openai.compiled_source import OpenAICompiledSource
 from mealie.schema.openai.organizers import OpenAIOrganizers
 from mealie.schema.recipe.recipe import Recipe
 from mealie.schema.user.user import PrivateUser
+from mealie.services.codex_cli import CodexCLIService
 from mealie.services.openai import OpenAIService
 
 
@@ -75,6 +76,7 @@ class WorkflowContext:
     repos: AllRepositories
     translator: Translator
     ai: OpenAIService
+    codex: CodexCLIService | None = None
 
     user: PrivateUser | None = None
     household: HouseholdInDB | None = None

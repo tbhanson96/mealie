@@ -92,7 +92,13 @@ class RecipeScraper:
 
             recipe_result, extras = result
             try:
+                structured_ingredients = recipe_result.recipe_ingredient
                 recipe = cleaner.clean(recipe_result, self.translator)
+                if any(
+                    ingredient.food or ingredient.unit or ingredient.original_text
+                    for ingredient in structured_ingredients
+                ):
+                    recipe.recipe_ingredient = structured_ingredients
             except Exception:
                 self.logger.exception(f"Failed to clean recipe data from {scraper.__class__.__name__}")
                 continue

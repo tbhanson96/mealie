@@ -377,6 +377,36 @@ class RecipeController(BaseRecipeController):
     # =======================================================================
     # AI Operations
 
+    @router.post("/create/social", status_code=201, response_model=str)
+    async def create_recipe_from_social(self, req: ScrapeRecipe) -> str:
+        """Compatibility endpoint for the fork's Codex-backed social video importer."""
+
+        async for event in self._create_recipe_from_social(req):
+            if isinstance(event.data, SSEDataEventDone):
+                return event.data.slug
+            if isinstance(event.data, SSEDataEventMessage) and event.event == SSEDataEventStatus.ERROR:
+                raise HTTPException(status_code=400, detail=ErrorResponse.respond(message=event.data.message))
+        raise HTTPException(status_code=500, detail=ErrorResponse.respond(message="Unknown Error"))
+
+    @router.post("/create/social/stream", response_class=EventSourceResponse)
+    async def create_recipe_from_social_stream(self, req: ScrapeRecipe) -> AsyncIterable[ServerSentEvent]:
+        async for event in self._create_recipe_from_social(req):
+            yield event
+
+    def _create_recipe_from_social(self, req: ScrapeRecipe) -> AsyncIterable[ServerSentEvent]:
+        service = AIRecipeService(self.repos, self.user, self.household, translator=self.translator)
+
+        async def create(on_progress: Callable[[str], Awaitable[None]]) -> str:
+            recipe = await service.create_from_ai(
+                url=req.url,
+                resolve_organizers=req.include_tags or req.include_categories,
+                on_progress=on_progress,
+            )
+            self._publish_recipe_created(recipe)
+            return recipe.slug
+
+        return self._stream_recipe_creation(create)
+
     @router.post("/create/ai", status_code=201, response_model=str)
     async def create_recipe_with_ai(
         self,

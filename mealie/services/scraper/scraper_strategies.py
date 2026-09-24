@@ -19,6 +19,7 @@ from mealie.schema.openai.recipe import OpenAIRecipe
 from mealie.schema.recipe.recipe import Recipe, RecipeStep
 from mealie.schema.recipe.recipe_ingredient import RecipeIngredient
 from mealie.schema.recipe.recipe_notes import RecipeNote
+from mealie.services.codex_cli import CodexCLIService
 from mealie.services.openai import OpenAIService, transcription
 from mealie.services.recipe.import_workflow import (
     RecipeImportWorkflow,
@@ -340,7 +341,9 @@ class RecipeScraperOpenAI(ABCScraperStrategy):
 
     def can_scrape(self) -> bool:
         settings = self.repos.group_ai_provider_settings.get_one(self.repos.group_id)
-        return bool(settings and settings.ai_enabled and (self.url or self.raw_html))
+        return bool(
+            (CodexCLIService.is_available() or (settings and settings.ai_enabled)) and (self.url or self.raw_html)
+        )
 
     async def get_html(self, url: str) -> str:
         # required by the base class, but unused: the workflow fetches the page itself
@@ -360,6 +363,7 @@ class RecipeScraperOpenAI(ABCScraperStrategy):
             repos=self.repos,
             translator=self.translator,
             ai=OpenAIService(self.repos),
+            codex=CodexCLIService() if CodexCLIService.is_available() else None,
             on_progress=on_progress,
         )
 

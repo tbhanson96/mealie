@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import re
 from collections.abc import Awaitable, Callable
@@ -5,7 +6,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from mealie.core import exceptions
-from mealie.core.config import get_app_settings
+from mealie.core.config import determine_data_dir, get_app_settings
 from mealie.core.root_logger import get_logger
 
 from .openai import OpenAIService
@@ -13,6 +14,13 @@ from .openai import OpenAIService
 SUBTITLE_LANGS = ["en", "fr", "es", "de", "it"]
 
 logger = get_logger()
+
+
+@functools.cache
+def _get_faster_whisper_model(model_size_or_path: str, device: str, compute_type: str, download_root: str):
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(model_size_or_path, device=device, compute_type=compute_type, download_root=download_root)
 
 
 class TranscribedAudio(TypedDict):
@@ -82,8 +90,9 @@ def download_video(url: str, temp_path: Path) -> TranscribedAudio:
     }
 
     settings = get_app_settings()
-    if settings.YTDLP_COOKIEFILE:
-        ydl_opts["cookiefile"] = settings.YTDLP_COOKIEFILE
+    cookie_file = settings.YTDLP_COOKIEFILE or getattr(settings, "SOCIAL_IMPORT_COOKIES_FILE", None)
+    if cookie_file:
+        ydl_opts["cookiefile"] = cookie_file
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -133,6 +142,27 @@ def read_subtitles(video_data: TranscribedAudio) -> str:
         return ""
 
 
+def transcribe_audio_locally(audio_path: Path) -> str:
+    settings = get_app_settings()
+    if not settings.SOCIAL_IMPORT_TRANSCRIPTION_ENABLED or not audio_path.is_file():
+        return ""
+
+    model_dir = determine_data_dir() / "whisper-models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        model = _get_faster_whisper_model(
+            settings.SOCIAL_IMPORT_TRANSCRIPTION_MODEL,
+            settings.SOCIAL_IMPORT_TRANSCRIPTION_DEVICE,
+            settings.SOCIAL_IMPORT_TRANSCRIPTION_COMPUTE_TYPE,
+            str(model_dir),
+        )
+        segments, _ = model.transcribe(str(audio_path), vad_filter=True)
+        return " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+    except Exception:
+        logger.exception("Failed to transcribe video audio locally")
+        return ""
+
+
 async def resolve_transcription(
     video_data: TranscribedAudio,
     openai_service: OpenAIService,
@@ -149,6 +179,10 @@ async def resolve_transcription(
 
     if subtitles := read_subtitles(video_data):
         return subtitles
+
+    if transcript := await asyncio.to_thread(transcribe_audio_locally, video_data["audio"]):
+        logger.info("Using local faster-whisper transcription")
+        return transcript
 
     if before_transcribe:
         await before_transcribe()

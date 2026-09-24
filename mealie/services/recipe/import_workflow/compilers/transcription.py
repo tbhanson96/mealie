@@ -1,7 +1,9 @@
 import asyncio
 
+from mealie.core.config import get_app_settings
 from mealie.core.dependencies.dependencies import get_temporary_path
 from mealie.schema.openai.compiled_source import OpenAICompiledSource
+from mealie.services.codex_cli import CodexCLIService
 from mealie.services.openai import transcription
 
 from .base import SourceCompiler, SourceType
@@ -24,8 +26,12 @@ class TranscriptionCompiler(SourceCompiler):
         if not url:
             return False
 
-        settings = self.ctx.ai.provider_settings
-        if not (settings and settings.audio_provider_enabled):
+        provider_settings = self.ctx.ai.provider_settings
+        local_enabled = get_app_settings().SOCIAL_IMPORT_TRANSCRIPTION_ENABLED
+        if not (
+            (provider_settings and provider_settings.audio_provider_enabled)
+            or (local_enabled and CodexCLIService.is_available())
+        ):
             return False
 
         return transcription.is_video_url(url)

@@ -1,13 +1,32 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from mealie.lang.providers import get_locale_provider
 from mealie.schema.recipe.recipe import Recipe
+from mealie.schema.recipe.recipe_ingredient import IngredientFood, RecipeIngredient
 from mealie.services.recipe.recipe_data_service import RecipeDataService
 from mealie.services.scraper import scraper
 from mealie.services.scraper.recipe_scraper import RecipeScraper
 from mealie.services.scraper.scraped_extras import ScrapedExtras
+from mealie.services.scraper.scraper_strategies import ABCScraperStrategy
+
+
+class StructuredIngredientScraper(ABCScraperStrategy):
+    def can_scrape(self) -> bool:
+        return True
+
+    async def get_html(self, url: str) -> str:
+        return self.raw_html or ""
+
+    async def parse(self, on_progress=None):
+        ingredient = RecipeIngredient(
+            quantity=1,
+            food=IngredientFood(id=uuid4(), name="flour"),
+            original_text="1 cup flour",
+        )
+        return Recipe(name="Bread", recipe_ingredient=[ingredient]), ScrapedExtras()
 
 
 @pytest.mark.asyncio
@@ -41,6 +60,29 @@ async def test_create_from_html_truncates_long_slug(monkeypatch):
     assert recipe.name == long_name
     # ...but the slug is truncated to a filesystem-safe length.
     assert 0 < len(recipe.slug) <= 250
+
+
+@pytest.mark.asyncio
+async def test_scrape_preserves_catalog_matched_ingredients(monkeypatch):
+    """The final cleaner must not discard catalog objects returned by Codex."""
+
+    def flatten_ingredients(recipe, translator):
+        recipe.recipe_ingredient = [RecipeIngredient(note="1 cup flour")]
+        return recipe
+
+    monkeypatch.setattr("mealie.services.scraper.recipe_scraper.cleaner.clean", flatten_ingredients)
+
+    scraper_service = RecipeScraper(
+        repos=None,  # type: ignore[arg-type]
+        translator=get_locale_provider(),
+        scrapers=[StructuredIngredientScraper],
+    )
+    recipe, _ = await scraper_service.scrape("https://example.com", html="<html></html>")
+
+    assert recipe is not None
+    assert recipe.recipe_ingredient[0].food is not None
+    assert recipe.recipe_ingredient[0].food.name == "flour"
+    assert recipe.recipe_ingredient[0].original_text == "1 cup flour"
 
 
 @pytest.mark.parametrize(
