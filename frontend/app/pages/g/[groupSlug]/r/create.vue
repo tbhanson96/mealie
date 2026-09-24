@@ -68,11 +68,6 @@ const subpages = computed<MenuItem[]>(() => [
   },
   {
     icon: $globals.icons.link,
-    text: i18n.t("recipe.import-social-link"),
-    value: "social",
-  },
-  {
-    icon: $globals.icons.link,
     text: i18n.t("recipe.bulk-url-import"),
     value: "bulk",
   },
@@ -82,10 +77,10 @@ const subpages = computed<MenuItem[]>(() => [
     value: "html",
   },
   {
-    icon: $globals.icons.fileImage,
-    text: i18n.t("recipe.create-from-images"),
-    value: "image",
-    hide: !group.value?.aiProviderSettings?.imageProviderEnabled,
+    icon: $globals.icons.autoFix,
+    text: i18n.t("recipe.import-with-ai"),
+    value: "ai",
+    hide: !group.value?.aiProviderSettings?.aiEnabled,
   },
   {
     icon: $globals.icons.edit,

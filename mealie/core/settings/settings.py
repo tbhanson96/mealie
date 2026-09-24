@@ -26,7 +26,7 @@ class ScraperProxyMode(StrEnum):
     """Try direct first; only retry through the proxy when a block is detected."""
 
     @classmethod
-    def _missing_(cls, value: object) -> "ScraperProxyMode":
+    def _missing_(cls, value: object) -> ScraperProxyMode:
         # Default any unrecognized configuration value to the safest, most useful mode.
         return cls.always
 
@@ -189,6 +189,23 @@ class AppSettings(AppLoggingSettings):
         extra = [host.strip().lower() for host in self.ALLOWED_IFRAME_HOSTS.split(",") if host.strip()]
         return list(dict.fromkeys(DEFAULT_ALLOWED_IFRAME_HOSTS + extra))
 
+    HTTP_ALLOW_LIST: str = ""
+    """Comma-separated hosts or CIDRs that server-initiated requests (recipe scraping, webhooks,
+    recipe actions) may reach even if they resolve to an otherwise-blocked private/internal address.
+    Use this to allow a known internal server."""
+
+    HTTP_DISALLOW_LIST: str = ""
+    """Comma-separated hosts or CIDRs that server-initiated requests may never reach, even if public.
+    Takes precedence over `HTTP_ALLOW_LIST`."""
+
+    @property
+    def http_allow_list(self) -> list[str]:
+        return [host.strip() for host in self.HTTP_ALLOW_LIST.split(",") if host.strip()]
+
+    @property
+    def http_disallow_list(self) -> list[str]:
+        return [host.strip() for host in self.HTTP_DISALLOW_LIST.split(",") if host.strip()]
+
     DAILY_SCHEDULE_TIME: str = "23:45"
     """Local server time, in HH:MM format. See `DAILY_SCHEDULE_TIME_UTC` for the parsed UTC equivalent"""
 
@@ -320,20 +337,15 @@ class AppSettings(AppLoggingSettings):
             "SMTP_FROM_EMAIL": from_email,
             "SMTP_AUTH_STRATEGY": strategy,
         }
-        missing_values = [key for (key, value) in required.items() if value is None]
+        if user or password:
+            required["SMTP_USER"] = user
+            required["SMTP_PASSWORD"] = password
+
+        missing_values = [key for (key, value) in required.items() if value is None or value == ""]
         if missing_values:
             description = f"Missing required values for {missing_values}"
 
-        if strategy and strategy.upper() in {"TLS", "SSL"}:
-            required["SMTP_USER"] = user
-            required["SMTP_PASSWORD"] = password
-            if not description:
-                missing_values = [key for (key, value) in required.items() if value is None]
-                description = f"Missing required values for {missing_values} because SMTP_AUTH_STRATEGY is not None"
-
-        not_none = "" not in required.values() and None not in required.values()
-
-        return FeatureDetails(enabled=not_none, description=description)
+        return FeatureDetails(enabled=not missing_values, description=description)
 
     # ===============================================
     # LDAP Configuration
@@ -441,36 +453,6 @@ class AppSettings(AppLoggingSettings):
     """
 
     # ===============================================
-    # Codex CLI Configuration
-
-    CODEX_CLI_BINARY: str = "codex"
-    """Path to the Codex CLI binary used for social recipe extraction."""
-
-    CODEX_CLI_MODEL: str | None = None
-    """Optional model override passed to `codex exec --model`."""
-
-    CODEX_CLI_PROFILE: str | None = None
-    """Optional profile passed to `codex exec --profile`."""
-
-    CODEX_CLI_TIMEOUT: int = 300
-    """Maximum seconds to wait for Codex CLI recipe extraction."""
-
-    SOCIAL_IMPORT_COOKIES_FILE: str | None = None
-    """Optional Netscape-format cookies file passed to yt-dlp for social media imports."""
-
-    SOCIAL_IMPORT_TRANSCRIPTION_ENABLED: bool = True
-    """Enable local faster-whisper transcription for social media imports when subtitles are unavailable."""
-
-    SOCIAL_IMPORT_TRANSCRIPTION_MODEL: str = "base"
-    """faster-whisper model size or model ID used for local social media audio transcription."""
-
-    SOCIAL_IMPORT_TRANSCRIPTION_DEVICE: str = "cpu"
-    """Device passed to faster-whisper for local social media audio transcription."""
-
-    SOCIAL_IMPORT_TRANSCRIPTION_COMPUTE_TYPE: str = "int8"
-    """Compute type passed to faster-whisper for local social media audio transcription."""
-
-    # ===============================================
     # Scraper Configuration
 
     SCRAPER_PROXY_URL: str | None = None
@@ -529,6 +511,11 @@ class AppSettings(AppLoggingSettings):
 
     TLS_PRIVATE_KEY_PATH: str | os.PathLike[str] | None = None
     """Path where the private key resides."""
+
+    # ===============================================
+    # YtDLP Configuration
+    YTDLP_COOKIEFILE: str | None = None
+    """Path to a cookies file for yt_dlp (used for video transcription scraping)"""
 
 
 def app_settings_constructor(data_dir: Path, production: bool, env_file: Path, env_encoding="utf-8") -> AppSettings:

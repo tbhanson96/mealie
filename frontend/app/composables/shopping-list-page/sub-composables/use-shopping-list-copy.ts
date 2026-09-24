@@ -10,15 +10,25 @@ const notesCheckbox = "\u2610";
 export function useShoppingListCopy() {
   const copy = useCopyList();
   const { copyText } = useCopy();
+  const { t } = useI18n();
 
   function copyListItems(itemsByLabel: { [key: string]: ShoppingListItemOut[] }, copyType: CopyTypes) {
     const text: string[] = [];
-    Object.entries(itemsByLabel).forEach(([label, items], idx) => {
+    const labelGroups = Object.entries(itemsByLabel);
+
+    // If the list has no labeled items at all, everything is grouped under the single
+    // "no label" bucket. In that case the heading is just noise, so we skip it.
+    const noLabelText = t("shopping-list.no-label");
+    const onlyHasNoLabelGroup = labelGroups.length === 1 && labelGroups[0][0] === noLabelText;
+
+    labelGroups.forEach(([label, items], idx) => {
       if (idx) {
         text.push("");
       }
 
-      text.push(formatCopiedLabelHeading(copyType, label));
+      if (!onlyHasNoLabelGroup) {
+        text.push(formatCopiedLabelHeading(copyType, label));
+      }
       items.forEach(item => text.push(formatCopiedListItem(copyType, item)));
     });
 
@@ -36,9 +46,7 @@ export function useShoppingListCopy() {
         return;
       }
       catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }
     }
 
@@ -48,9 +56,7 @@ export function useShoppingListCopy() {
         return;
       }
       catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }
     }
 
@@ -59,90 +65,33 @@ export function useShoppingListCopy() {
 
   function formatAppleNotesShareText(itemsByLabel: { [key: string]: ShoppingListItemOut[] }, title: string) {
     const text: string[] = [title];
-
     Object.entries(itemsByLabel).forEach(([label, items]) => {
-      if (!items.length) {
-        return;
-      }
-
+      if (!items.length) return;
       text.push("", label);
       items.forEach(item => text.push(`${notesCheckbox} ${item.display || ""}`));
     });
-
     return text.join("\n");
   }
 
   function createAppleNotesHtmlFile(itemsByLabel: { [key: string]: ShoppingListItemOut[] }, title: string) {
     const html = formatAppleNotesShareHtml(itemsByLabel, title);
     const filename = `${safeFilename(title || "shopping-list")}.html`;
-
     return new File([html], filename, { type: "text/html" });
   }
 
   function formatAppleNotesShareHtml(itemsByLabel: { [key: string]: ShoppingListItemOut[] }, title: string) {
     const sections = Object.entries(itemsByLabel)
       .filter(([, items]) => items.length > 0)
-      .map(([label, items]) => `
-        <section>
-          <h2>${escapeHtml(label)}</h2>
-          <ul>
-            ${items.map(item => `
-              <li>
-                <span class="checkbox"></span>
-                <span>${escapeHtml(item.display || "")}</span>
-              </li>
-            `).join("")}
-          </ul>
-        </section>
-      `)
+      .map(([label, items]) => `<section><h2>${escapeHtml(label)}</h2><ul>${items
+        .map(item => `<li><span class="checkbox"></span><span>${escapeHtml(item.display || "")}</span></li>`)
+        .join("")}</ul></section>`)
       .join("");
 
-    return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>${escapeHtml(title)}</title>
-    <style>
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-        font-size: 17px;
-        line-height: 1.35;
-      }
-      h1 {
-        font-size: 22px;
-        margin: 0 0 18px;
-      }
-      h2 {
-        font-size: 18px;
-        margin: 18px 0 8px;
-      }
-      ul {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-      }
-      li {
-        align-items: flex-start;
-        display: flex;
-        gap: 8px;
-        margin: 6px 0;
-      }
-      .checkbox {
-        border: 1.5px solid currentColor;
-        border-radius: 50%;
-        box-sizing: border-box;
-        flex: 0 0 auto;
-        height: 18px;
-        margin-top: 2px;
-        width: 18px;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>${escapeHtml(title)}</h1>
-    ${sections}
-  </body>
-</html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;font-size:17px;line-height:1.35}
+h1{font-size:22px;margin:0 0 18px}h2{font-size:18px;margin:18px 0 8px}ul{list-style:none;margin:0;padding:0}
+li{align-items:flex-start;display:flex;gap:8px;margin:6px 0}.checkbox{border:1.5px solid currentColor;border-radius:50%;box-sizing:border-box;flex:0 0 auto;height:18px;margin-top:2px;width:18px}
+</style></head><body><h1>${escapeHtml(title)}</h1>${sections}</body></html>`;
   }
 
   function escapeHtml(value: string) {
@@ -155,11 +104,7 @@ export function useShoppingListCopy() {
   }
 
   function safeFilename(value: string) {
-    return value
-      .trim()
-      .replace(/[^a-z0-9]+/gi, "-")
-      .replace(/^-+|-+$/g, "")
-      .toLowerCase() || "shopping-list";
+    return value.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "shopping-list";
   }
 
   function formatCopiedListItem(copyType: CopyTypes, item: ShoppingListItemOut): string {

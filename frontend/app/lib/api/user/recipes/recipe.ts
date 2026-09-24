@@ -39,10 +39,9 @@ const routes = {
   recipesSuggestions: `${prefix}/recipes/suggestions`,
   recipesTestScrapeUrl: `${prefix}/recipes/test-scrape-url`,
   recipesCreateUrl: `${prefix}/recipes/create/url/stream`,
-  recipesCreateSocial: `${prefix}/recipes/create/social/stream`,
   recipesCreateUrlBulk: `${prefix}/recipes/create/url/bulk`,
   recipesCreateFromZip: `${prefix}/recipes/create/zip`,
-  recipesCreateFromImage: `${prefix}/recipes/create/image`,
+  recipesCreateWithAI: `${prefix}/recipes/create/ai/stream`,
   recipesCreateFromHtmlOrJson: `${prefix}/recipes/create/html-or-json/stream`,
   recipesCategory: `${prefix}/recipes/category`,
   recipesParseIngredient: `${prefix}/parser/ingredient`,
@@ -52,6 +51,7 @@ const routes = {
   recipesRecipeSlug: (recipe_slug: string) => `${prefix}/recipes/${recipe_slug}`,
   recipesRecipeSlugImage: (recipe_slug: string) => `${prefix}/recipes/${recipe_slug}/image`,
   recipesRecipeSlugAssets: (recipe_slug: string) => `${prefix}/recipes/${recipe_slug}/assets`,
+  recipesRecipeSlugAssetsUrl: (recipe_slug: string) => `${prefix}/recipes/${recipe_slug}/assets/url`,
 
   recipesSlugComments: (slug: string) => `${prefix}/recipes/${slug}/comments`,
   recipesSlugCommentsId: (slug: string, id: number) => `${prefix}/recipes/${slug}/comments/${id}`,
@@ -131,6 +131,12 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
     return await this.requests.post<RecipeAsset>(routes.recipesRecipeSlugAssets(recipeSlug), formData);
   }
 
+  /** Stores a remote image as an asset. The server does the download, since the browser can't
+   * read cross-origin image bytes from a drag. */
+  async createAssetFromUrl(recipeSlug: string, url: string) {
+    return await this.requests.post<RecipeAsset>(routes.recipesRecipeSlugAssetsUrl(recipeSlug), { url });
+  }
+
   updateImage(slug: string, fileObject: File) {
     const formData = new FormData();
     formData.append("image", fileObject);
@@ -151,16 +157,20 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
     return await this.requests.post<Recipe | null>(routes.recipesTestScrapeUrl, { url, useOpenAI });
   }
 
-  private streamRecipeCreate(streamRoute: string, payload: object, onProgress?: (message: string) => void): Promise<RequestResponse<string>> {
+  private streamRecipeCreate(streamRoute: string, payload: object | FormData, onProgress?: (message: string) => void): Promise<RequestResponse<string>> {
     return new Promise((resolve) => {
       const { token } = useMealieAuth();
+      const { locale } = useGlobalI18n();
+      const isFormData = payload instanceof FormData;
 
       const sse = new SSE(streamRoute, {
         headers: {
-          "Content-Type": "application/json",
+          // the browser has to set the multipart Content-Type itself, so it includes the boundary
+          ...(isFormData ? {} : { "Content-Type": "application/json" }),
           ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
+          "Accept-Language": locale.value,
         },
-        payload: JSON.stringify(payload),
+        payload: isFormData ? payload : JSON.stringify(payload),
         withCredentials: true,
         autoReconnect: false,
       });
@@ -230,32 +240,41 @@ export class RecipeAPI extends BaseCRUDAPI<CreateRecipe, Recipe, Recipe> {
     return this.streamRecipeCreate(routes.recipesCreateUrl, { url, includeTags, includeCategories }, onProgress);
   }
 
-  async createOneBySocialUrl(
-    url: string,
-    includeTags: boolean,
-    includeCategories: boolean,
-    onProgress?: (message: string) => void,
-  ): Promise<RequestResponse<string>> {
-    return this.streamRecipeCreate(routes.recipesCreateSocial, { url, includeTags, includeCategories }, onProgress);
-  }
-
   async createManyByUrl(payload: CreateRecipeByUrlBulk) {
     return await this.requests.post<string>(routes.recipesCreateUrlBulk, payload);
   }
 
-  async createOneFromImages(fileObjects: (Blob | File)[], translateLanguage: string | null = null) {
+  async createOneWithAI(
+    payload: {
+      content?: string | null;
+      url?: string | null;
+      images?: (Blob | File)[];
+      translateLanguage?: string | null;
+      createNewOrganizers?: boolean;
+    },
+    onProgress?: (message: string) => void,
+  ): Promise<RequestResponse<string>> {
     const formData = new FormData();
 
-    fileObjects.forEach((file) => {
-      formData.append("images", file);
-    });
-
-    let apiRoute = routes.recipesCreateFromImage;
-    if (translateLanguage) {
-      apiRoute = `${apiRoute}?translateLanguage=${translateLanguage}`;
+    if (payload.content) {
+      formData.append("content", payload.content);
+    }
+    if (payload.url) {
+      formData.append("url", payload.url);
+    }
+    if (payload.translateLanguage) {
+      formData.append("translateLanguage", payload.translateLanguage);
+    }
+    if (payload.createNewOrganizers) {
+      formData.append("createNewOrganizers", "true");
     }
 
-    return await this.requests.post<string>(apiRoute, formData);
+    (payload.images || []).forEach((image, index) => {
+      // blobs from the cropper have no filename of their own, and the backend needs one
+      formData.append("images", image, image instanceof File ? image.name : `image-${index}.webp`);
+    });
+
+    return this.streamRecipeCreate(routes.recipesCreateWithAI, formData, onProgress);
   }
 
   async parseIngredients(parser: Parser, ingredients: Array<string>) {

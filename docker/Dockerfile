@@ -1,35 +1,23 @@
 ###############################################
 # Frontend Build
 ###############################################
-FROM node:24@sha256:5711a0d445a1af54af9589066c646df387d1831a608226f4cd694fc59e745059 \
+FROM node:24@sha256:6dac556d980b7f0e5498d08f08cee0ca67798b4ad6c23964a9214920e67758d0 \
     AS frontend-builder
+
+RUN npm install --global pnpm@11
 
 WORKDIR /frontend
 
 COPY frontend .
 
-RUN yarn install \
-    --prefer-offline \
-    --frozen-lockfile \
-    --non-interactive \
-    --production=false \
-    # https://github.com/docker/build-push-action/issues/471
-    --network-timeout 1000000
+RUN pnpm clean-install
 
-RUN yarn generate
-
-###############################################
-# Codex CLI
-###############################################
-FROM node:24@sha256:fdddfb3e688158251943d52eba361de991548f6814007acba4917ae6b512d6be \
-    AS codex-cli
-
-RUN npm install -g @openai/codex@0.142.5
+RUN pnpm generate
 
 ###############################################
 # Base Image - Python
 ###############################################
-FROM python:3.12-slim@sha256:7026274c107626d7e940e0e5d6730481a4600ae95d5ca7eb532dd4180313fea9 \
+FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 \
     AS python-base
 
 ENV MEALIE_HOME="/app"
@@ -77,10 +65,11 @@ COPY --from=frontend-builder /frontend/dist ./mealie/frontend
 # Build the source and binary package
 RUN uv build --out-dir dist
 
-# Create the requirements file, which is used to install the built package and
-# its pinned dependencies later. mealie is included to ensure the built one is
-# what's installed.
-RUN uv export --no-editable --no-emit-project --extra pgsql --format requirements-txt --output-file dist/requirements.txt \
+# dependencies.txt changes only when uv.lock does, so the venv build can cache
+# the install. requirements.txt adds the wheel that was just built, so an
+# install from it gets that exact one.
+RUN uv export --no-editable --no-emit-project --extra pgsql --format requirements-txt --output-file dist/dependencies.txt \
+    && cp dist/dependencies.txt dist/requirements.txt \
     && MEALIE_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])") \
     && echo "mealie[pgsql]==${MEALIE_VERSION} \\" >> dist/requirements.txt \
     && pip hash dist/mealie-${MEALIE_VERSION}-py3-none-any.whl | tail -n1 | tr -d '\n' >> dist/requirements.txt \
@@ -114,10 +103,15 @@ RUN python3 -m venv --upgrade-deps $VENV_PATH
 # Install the wheel and all dependencies into the venv
 FROM venv-builder-base AS venv-builder
 
+# Cache key is dependencies.txt, so a mealie-only commit reuses this layer.
+COPY --from=packages dependencies.txt /dist/dependencies.txt
+RUN . $VENV_PATH/bin/activate \
+    && pip install --require-hashes -r /dist/dependencies.txt
+
 # Copy built package (wheel) and its dependency requirements
 COPY --from=packages * /dist/
 
-# Install the wheel with exact versions of dependencies into the venv
+# The dependencies are already in place, so pip only installs mealie itself.
 RUN . $VENV_PATH/bin/activate \
     && pip install --require-hashes -r /dist/requirements.txt --find-links /dist
 
@@ -142,10 +136,6 @@ RUN apt-get update \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=codex-cli /usr/local/bin/node /usr/local/bin/node
-COPY --from=codex-cli /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/@openai
-RUN ln -sf ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
-
 # create directory used for Docker Secrets
 RUN mkdir -p /run/secrets
 
@@ -166,7 +156,7 @@ COPY ./docker/healthcheck.sh $MEALIE_HOME/healthcheck.sh
 RUN chmod +x $MEALIE_HOME/healthcheck.sh
 HEALTHCHECK CMD $MEALIE_HOME/healthcheck.sh
 
-ENV HOST 0.0.0.0
+ENV HOST=0.0.0.0
 
 EXPOSE ${APP_PORT}
 COPY ./docker/entry.sh $MEALIE_HOME/run.sh

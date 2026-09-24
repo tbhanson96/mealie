@@ -120,6 +120,8 @@
 
     Login session can be configured by setting the `TOKEN_TIME` variable on the backend container.
 
+    Sessions refresh automatically while Mealie is open, so `TOKEN_TIME` is how long you can go without using Mealie before you have to log in again, not a hard limit on the session. Ticking "Remember Me" at login keeps the session after you close the browser; leaving it unticked ends the session when the browser closes.
+
     - [Backend Config](./installation/backend-config.md)
 
 
@@ -148,7 +150,7 @@
     ```shell
     docker exec -it mealie bash
 
-    python /opt/mealie/lib64/python3.12/site-packages/mealie/scripts/reset_locked_users.py
+    python /opt/mealie/lib64/python3.14/site-packages/mealie/scripts/reset_locked_users.py
     ```
 
 
@@ -161,7 +163,7 @@
     ```shell
     docker exec -it mealie bash
 
-    python /opt/mealie/lib64/python3.12/site-packages/mealie/scripts/make_admin.py
+    python /opt/mealie/lib64/python3.14/site-packages/mealie/scripts/make_admin.py
     ```
 
 
@@ -174,7 +176,7 @@
     ```shell
     docker exec -it mealie bash
 
-    python /opt/mealie/lib64/python3.12/site-packages/mealie/scripts/change_password.py
+    python /opt/mealie/lib64/python3.14/site-packages/mealie/scripts/change_password.py
     ```
 
 
